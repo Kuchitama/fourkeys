@@ -1,25 +1,12 @@
 -- Deployments View: For GitHub `deploy_id` is the ID of the Deployment Status.
 WITH
-  github_repositories AS (
-    SELECT
-      github_repository,
-      COUNT(DISTINCT service) AS count_services,
-    FROM
-      `four_keys.services`
-    GROUP BY
-      1
-  ),
   deploys AS (  -- Cloud Build, GitHub, ArgoCD
     SELECT
       source,
       CASE
         WHEN source LIKE "github%" THEN JSON_EXTRACT_SCALAR(metadata, '$.repository.full_name')
       END
-        AS metadata_service,
-      CASE
-        WHEN source LIKE "github%" THEN JSON_EXTRACT_SCALAR(metadata, '$.deployment_status.environment')
-      END
-        AS metadata_environment,
+        AS service,
       id AS deploy_id,
       time_created,
       CASE
@@ -35,7 +22,7 @@ WITH
       END
         AS additional_commits
     FROM
-      `four_keys.events_raw`
+      four_keys.events_raw
     WHERE
       (
         -- Cloud Build Deployments
@@ -46,95 +33,36 @@ WITH
         OR (source = "argocd" AND JSON_EXTRACT_SCALAR(metadata, '$.status') = "SUCCESS")
       )
   ),
-  deploys_with_service AS (
-    SELECT
-      deploys.*,
-      service_catalog.service,
-      service_catalog.production_env,
-      service_catalog.staging_env,
-    FROM
-      deploys
-    LEFT JOIN
-      github_repositories
-    ON
-      CASE
-        WHEN deploys.source = "github" THEN deploys.metadata_service = github_repositories.github_repository
-        ELSE FALSE
-      END
-    LEFT JOIN
-      `four_keys.services` AS service_catalog
-    ON
-      CASE
-        WHEN
-          deploys.source = "github"
-          AND github_repositories.count_services > 1 -- there's more than 1 service in our catalog linked to this GitHub repo.
-          AND metadata_environment LIKE '%:%'  -- the GitHub deployment environment name follows the '%:%' format.
-        THEN
-          deploys.metadata_service = service_catalog.github_repository
-          AND SPLIT(metadata_environment, ':')[OFFSET(0)] = service_catalog.service
-        WHEN
-          deploys.source = "github"
-        THEN
-          deploys.metadata_service = service_catalog.github_repository
-        ELSE FALSE
-      END
-  ),
   changes_raw AS (
     SELECT
-      source,
       id,
       metadata AS change_metadata,
       CASE
         WHEN source LIKE "github%" THEN JSON_EXTRACT_SCALAR(metadata, '$.repository.full_name')
       END
-        AS metadata_service
+        AS service
     FROM
-      `four_keys.events_raw`
-  ),
-  changes_raw_with_service AS (
-    SELECT
-      changes_raw.*,
-      service_catalog.service,
-    FROM
-      changes_raw
-    LEFT JOIN
-      `four_keys.services` AS service_catalog
-    ON
-      CASE
-        WHEN changes_raw.source = "github" THEN changes_raw.metadata_service = service_catalog.github_repository
-        ELSE FALSE
-      END
+      four_keys.events_raw
   ),
   deployment_changes AS (
     SELECT
-      deploys.source,
+      source,
       deploys.service,
-      deploys.metadata_service as deploys_service,
-      changes_raw.metadata_service as changes_service,
-      CASE
-        WHEN deploys.metadata_environment = production_env THEN "production"
-        WHEN deploys.metadata_environment = staging_env THEN "staging"
-        ELSE deploys.metadata_environment
-      END
-        AS environment,
       deploy_id,
       deploys.time_created time_created,
       change_metadata,
       four_keys.json2array(JSON_EXTRACT(change_metadata, '$.commits')) AS array_commits,
       main_commit
     FROM
-      deploys_with_service as deploys
+      deploys
     JOIN
-      changes_raw_with_service as changes_raw
+      changes_raw
     ON
       ( changes_raw.service = deploys.service ) AND ( changes_raw.id = deploys.main_commit OR changes_raw.id IN UNNEST(deploys.additional_commits) )
   )
 SELECT
   source,
   service,
-  deploys_service,
-  changes_service,
-  environment,
   deploy_id,
   time_created,
   main_commit,
@@ -148,7 +76,4 @@ GROUP BY
   2,
   3,
   4,
-  5,
-  6,
-  7,
-  8;
+  5;
