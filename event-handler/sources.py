@@ -41,7 +41,7 @@ def github_verification(signature, body):
         # Get secret from Cloud Secret Manager
         secret = get_secret(PROJECT_NAME, "event-handler", "latest")
         # Compute the hashed signature
-        hashed = hmac.new(secret, body, sha1)
+        hashed = hmac.new(secret, msg=body, digestmod=sha1)
         expected_signature += hashed.hexdigest()
 
     except Exception as e:
@@ -118,7 +118,7 @@ def get_secret(project_name, secret_name, version_num):
     try:
         client = secretmanager.SecretManagerServiceClient()
         name = client.secret_version_path(project_name, secret_name, version_num)
-        secret = client.access_secret_version(name)
+        secret = client.access_secret_version(name=name)
         return secret.payload.data
     except Exception as e:
         print(e)
